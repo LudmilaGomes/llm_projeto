@@ -14,9 +14,11 @@ client = Groq(api_key=api_key)
 
 # modelo reconhece se o aluno quer fazer questões; retorna 'SIM' ou 'NÃO'
 def aluno_quer_questionario(prompt_estudante):
-  prompt = 'Reconheça explicitamente o pedido do aluno de gerar um questionário e RESPONDA APENAS com "NÃO" \
-            se o aluno não quer que seja gerado um questionário e com "SIM" se ele quiser que seja gerado um questionário. \
-            A mensagem do aluno está entre colchetes: [' + prompt_estudante + '].'
+  prompt = 'Na mensagem entre colchetes [' + prompt_estudante  + '] retorne apenas "SIM" se o usuário deseja que você gere perguntas para ele responder \
+            e retorne "NÃO" se o usuário deseja que você gere perguntas para ele responder.'
+  # prompt = 'Reconheça explicitamente se o aluno quer gerar um questionário e RESPONDA APENAS com "NÃO" \
+  #           se o aluno não quer que seja gerado um questionário e com "SIM" se ele quiser que seja gerado um questionário. \
+  #           A mensagem do aluno está entre colchetes: [' + prompt_estudante + '].'
   completion = client.chat.completions.create(
     model='llama-3.3-70b-specdec',
     messages=[
@@ -31,8 +33,10 @@ def aluno_quer_questionario(prompt_estudante):
 
 # modelo reconhece se o aluno quer finalizar programa; retorna 'SIM' ou 'NÃO'
 def aluno_quer_terminar_programa(prompt_estudante):
-  prompt = 'Reconheça explicitamente e implicitamente e RESPONDA APENAS com "NÃO" se o aluno quer continuar fazendo \
-            perguntas e com "SIM" se ele quiser finalizar o programa. A mensagem do aluno está entre colchetes: [' + prompt_estudante + '].'
+  # prompt = 'Na mensagem entre colchetes [' + prompt_estudante  + '] retorne apenas "SIM" se o usuário deseja finalizar o programa \
+  #           e retorne "NÃO" se o usuário deseja continuar perguntando algo.'
+  prompt = 'Reconheça explicitamente e implicitamente e RESPONDA APENAS com "NÃO" se o aluno quer continuar conversando com você \
+            e com "SIM" se ele quiser finalizar o programa. A mensagem do aluno está entre colchetes: [' + prompt_estudante + '].'
   completion = client.chat.completions.create(
     model='llama-3.3-70b-specdec',
     messages=[
@@ -53,8 +57,6 @@ def reconhece_assunto(prompt_estudante):
   prompt = 'Apenas indique o conteúdo de estudo ao qual a mensagem entre colchetes se refere [' + prompt_estudante + ']\
             e não explique nada, diga apenas qual o assunto.'
   completion = client.chat.completions.create(
-    # model='deepseek-r1-distill-llama-70b',
-    # model='llama-3.3-70b-versatile',
     model='llama-3.3-70b-specdec',
     messages=[
       {
@@ -154,12 +156,15 @@ def resolve_questionario(questoes):
 # FUNÇÕES QUE TRAZEM EXPLICAÇÕES E FEEDBACKS PARA O USUÁRIO
 
 # a partir do assunto reconhecido e do prompt do usuário, retorna uma explicação sobre o conteúdo passado
-def explica(assunto, prompt_estudante):
+def explica(assunto, prompt_estudante, mensagens_anteriores_usuario, mensagens_anteriores_modelo):
   nivel_aluno = reconhece_nivel_aluno_texto(prompt_estudante)
 
-  prompt = 'Responda detalhadamente à mensagem entre colchetes [' + prompt_estudante + '] como um tutor que dá suporte ao\
-            aprendizado do estudante e responda perguntas detalhadamente, explique detalhadamente e tire as dúvidas\
-            do usuário sobre o conteúdo' + assunto + '. Responda à mensagem para que um aluno de nível ' + nivel_aluno + ' entenda.'
+  prompt = 'Responda detalhadamente à mensagem entre colchetes [' + prompt_estudante + '] como um tutor, explicando o conteúdo ' + assunto + ' para um aluno de nível ' + nivel_aluno + '. \
+            Se houver referências a mensagens anteriores, use este histórico: \
+            Mensagens do aluno: ' + mensagens_anteriores_usuario + ' \
+            Suas respostas: ' + mensagens_anteriores_modelo + '. \
+            Não mencione o nível do aluno nem o reconhecimento do assunto, apenas use as mensagens como referência.'
+
   completion = client.chat.completions.create(
     model='llama-3.3-70b-specdec',
     messages=[
@@ -194,27 +199,46 @@ def compara_respostas_feedback(respostas_certas, respostas_aluno):
 # LOOP DE FUNCIONAMENTO DO CHAT
 
 lista_prompts_aluno = []
+mensagens_anteriores_usuario = []
+mensagens_anteriores_modelo = []
+
+contador = 0
 
 while(True):
   prompt_estudante = input('Escreva sua dúvida: ')
+  
+  # verifica o assunto apenas uma vez no primeiro prompt do aluno
+  if contador == 0:
+    assunto = reconhece_assunto(prompt_estudante)
+    contador += 1
+
   lista_prompts_aluno.append(prompt_estudante)
+  mensagens_anteriores_usuario.append(prompt_estudante)
 
   if(aluno_quer_questionario(prompt_estudante) == 'SIM'):
     questoes = gera_questionario(assunto)
     print('Para praticar, geramos as seguintes questões. Tente resolvé-las e ter um feedback de desempenho!\n\n\=================\n\nQuestionário:\n', questoes)
     print('\n\=================\n')
     respostas_aluno = input('Digite suas respostas: ')
-    lista_prompts_aluno.append(respostas_aluno)
     
     questoes_resolvidas = resolve_questionario(questoes)
-    print(compara_respostas_feedback(questoes_resolvidas, respostas_aluno))
+    comparacao = compara_respostas_feedback(questoes_resolvidas, respostas_aluno)
+    print(comparacao)
     print('\n\=================\n')
+
+    lista_prompts_aluno.append(respostas_aluno)
+    mensagens_anteriores_usuario.append(respostas_aluno)
+    mensagens_anteriores_modelo.append(questoes)
+    mensagens_anteriores_modelo.append(questoes_resolvidas)
+    mensagens_anteriores_modelo.append(comparacao)
   else:
     if(aluno_quer_terminar_programa(prompt_estudante) == 'SIM'):
       break
-    assunto = reconhece_assunto(prompt_estudante)
-    print(explica(assunto, prompt_estudante))
+    explicacao = explica(assunto, prompt_estudante, ('}' + '}'.join(mensagens_anteriores_usuario)), ('}' + '}'.join(mensagens_anteriores_modelo)))
+    print(explicacao)
     print('\n\=================\n')
+
+    mensagens_anteriores_modelo.append(explicacao)
 
 # salva os prompts do aluno no arquivo
 f = open("prompts_aluno.txt", "a")
